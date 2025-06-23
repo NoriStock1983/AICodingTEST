@@ -1,0 +1,102 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# データ保護・入出力制御
+
+## 1. SQLインジェクション対策（IPA準拠）
+
+### 基本方針
+- SQLの条件分には、プレースホルダー（パラメータ化クエリ）を利用する
+- 動的SQL構築時も必ずプレースホルダーを使用し、文字列結合は行わない
+
+### 実装要件
+- **ORM使用時**: ORM提供のクエリビルダーまたはプリペアドステートメント機能を使用
+- **プレーンSQL使用時**: データベースドライバーのプリペアドステートメント機能を使用
+- **入力値検証**: SQLに渡すパラメータは事前にバリデーションを実施
+- **エスケープ処理**: データベース固有のエスケープ関数を使用（プレースホルダー併用）
+
+### 禁止事項
+- ユーザー入力を直接SQL文に埋め込む文字列結合
+- 動的SQLでのエスケープ処理のみに依存した実装
+- 外部入力値の直接使用
+
+## 2. データ露出制御（OWASP API03対策）
+
+### 基本方針
+- Broken Object Property Level Authorization対策
+- 必要最小限のデータのみ応答
+
+### 実装要件
+
+#### 2.1 機密情報の除外
+- パスワードハッシュ
+- 内部管理用フィールド
+- 個人情報（権限に応じて）
+
+#### 2.2 フィールドフィルタリング
+```json
+{
+  "user_id": "12345",
+  "username": "john_doe",
+  "email": "john@example.com",
+  "created_at": "2025-01-01T00:00:00Z"
+  // password_hash: 除外
+  // internal_flags: 除外
+}
+```
+
+#### 2.3 動的フィールド制御
+- クエリパラメータによるフィールド指定
+- 権限レベルに応じた自動フィルタリング
+
+## 3. 入力値検証・出力値制御
+
+### 基本方針
+- 全ての入力値を検証し、出力値を適切に制御
+
+### 実装要件
+
+#### 3.1 入力値検証
+- **JSONスキーマ検証**: 構造・型・値の妥当性
+- **文字列長制限**: 各フィールドの最大長
+- **文字種制限**: 英数字・記号の許可範囲
+- **SQLインジェクション検証**: 危険な文字列パターンの検出
+
+#### 3.2 出力値制御
+- **HTMLエスケープ**: 必要に応じてエスケープ処理
+- **JSONエスケープ**: 特殊文字の適切な処理
+- **文字エンコーディング**: UTF-8の強制
+
+### 実装例
+```typescript
+// 入力値検証の例
+export class ValidationMiddleware {
+  static validateUserInput(req: Request, res: Response, next: NextFunction): void {
+    const schema = {
+      type: 'object',
+      properties: {
+        username: { type: 'string', minLength: 3, maxLength: 50 },
+        email: { type: 'string', format: 'email' },
+        age: { type: 'integer', minimum: 0, maximum: 150 }
+      },
+      required: ['username', 'email'],
+      additionalProperties: false
+    };
+    
+    const validate = ajv.compile(schema);
+    const valid = validate(req.body);
+    
+    if (!valid) {
+      res.status(400).json({ 
+        error: 'Validation failed', 
+        details: validate.errors 
+      });
+      return;
+    }
+    
+    next();
+  }
+}
+```
